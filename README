@@ -1,0 +1,5 @@
+1. how to use this
+
+nasm -o boot.bin boot.asm
+
+qemu-system-x86_64 boot.bin
