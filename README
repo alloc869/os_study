@@ -3,3 +3,9 @@
 nasm -o boot.bin boot.asm
 
 qemu-system-x86_64 boot.bin
+
+chapter3/a:
+add a hack_boot.c to make a boot using
+qemu-system-x86_64
+gcc hack_boot.c -o hack_boot
+./hack_boot pmtest1.bin
