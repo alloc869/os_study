@@ -13,7 +13,6 @@ org	0100h
 ;                               base,       limit     , attr
 LABEL_GDT:	   Descriptor       0,                0, 0           ; null desc
 LABEL_DESC_NORMAL: Descriptor    0,         0ffffh, DA_DRW
-
 LABEL_DESC_CODE32: Descriptor       0, SegCode32Len - 1, DA_C + DA_32; non-coherent code
 LABEL_DESC_CODE16:  Descriptor    0,    0ffffh, DA_C
 LABEL_DESC_DATA:    Descriptor    0,    DataLen-1, DA_DRW
@@ -22,13 +21,13 @@ LABEL_DESC_CODE_DEST: Descriptor  0,    SegCodeDestLen-1, DA_C+DA_32
 LABEL_DESC_TEST:    Descriptor 0500000h,0ffffh, DA_DRW
 LABEL_DESC_LDT:     Descriptor       0,  LDTLen - 1, DA_LDT
 LABEL_DESC_VIDEO:   Descriptor 0B8000h,  0ffffh, DA_DRW	+ DA_DPL3    ; viedo base adrress
-LABEL_CALL_GATE_TEST: Gate SelectorCodeDest,   0,     0, DA_386CGate+DA_DPL0
+LABEL_CALL_GATE_TEST: Gate SelectorCodeDest,   0,     0, DA_386CGate+DA_DPL3
 ; call gate
 
 LABEL_DESC_CODE_RING3: Descriptor 0, SegCodeRing3Len-1, DA_C+DA_32+DA_DPL3
-
 LABEL_DESC_STACK3:     Descriptor 0,       TopOfStack3, DA_DRWA+DA_32+DA_DPL3
 
+LABEL_DESC_TSS:        Descriptor 0,          TSSLen-1, DA_386TSS
 
 GdtLen		equ	$ - LABEL_GDT	; GDT length
 GdtPtr		dw	GdtLen - 1	; GDT limit
@@ -44,9 +43,10 @@ SelectorTest		equ	LABEL_DESC_TEST		- LABEL_GDT
 SelectorCode32		equ	LABEL_DESC_CODE32	- LABEL_GDT
 SelectorVideo		equ	LABEL_DESC_VIDEO	- LABEL_GDT
 SelectorLDT		    equ	LABEL_DESC_LDT		- LABEL_GDT
-SelectorCallGateTest	equ	LABEL_CALL_GATE_TEST	- LABEL_GDT
+SelectorCallGateTest	equ	LABEL_CALL_GATE_TEST	- LABEL_GDT + SA_RPL3
 SelectorCodeRing3	equ	LABEL_DESC_CODE_RING3	- LABEL_GDT + SA_RPL3
 SelectorStack3		equ	LABEL_DESC_STACK3	- LABEL_GDT + SA_RPL3
+SelectorTSS		equ	LABEL_DESC_TSS		- LABEL_GDT
 ; END of [SECTION .gdt]
 
 [SECTION .data1]	 ; data section
@@ -77,6 +77,41 @@ LABEL_STACK3:
 	times 512 db 0
 TopOfStack3	equ	$ - LABEL_STACK3 - 1
 
+; TSS
+[SECTION .tss]
+ALIGN	32
+[BITS	32]
+LABEL_TSS:
+		DD	0			; Back
+		DD	TopOfStack		; 0 级堆栈
+		DD	SelectorStack		; 
+		DD	0			; 1 级堆栈
+		DD	0			; 
+		DD	0			; 2 级堆栈
+		DD	0			; 
+		DD	0			; CR3
+		DD	0			; EIP
+		DD	0			; EFLAGS
+		DD	0			; EAX
+		DD	0			; ECX
+		DD	0			; EDX
+		DD	0			; EBX
+		DD	0			; ESP
+		DD	0			; EBP
+		DD	0			; ESI
+		DD	0			; EDI
+		DD	0			; ES
+		DD	0			; CS
+		DD	0			; SS
+		DD	0			; DS
+		DD	0			; FS
+		DD	0			; GS
+		DD	0			; LDT
+		DW	0			; 调试陷阱标志
+		DW	$ - LABEL_TSS + 2	; I/O位图基址
+		DB	0ffh			; I/O位图结束标志
+TSSLen		equ	$ - LABEL_TSS
+
 
 [SECTION .s16] ; entry point
 [BITS	16]
@@ -85,13 +120,12 @@ LABEL_BEGIN:
 	mov	ds, ax
 	mov	es, ax
 	mov	ss, ax
-	mov	sp, 0100h
+    mov sp, 0100h
 
-    ; fill right return segment
-	mov	[LABEL_GO_BACK_TO_REAL+3], ax
-	mov	[SPValueInRealMode], sp
+    mov [LABEL_GO_BACK_TO_REAL+3], ax
+    mov [SPValueInRealMode], sp
 
-	; fill code16 descriptor
+    ; fill code16 descriptor
 	mov	ax, cs
 	movzx	eax, ax
 	shl	eax, 4
@@ -173,10 +207,24 @@ LABEL_BEGIN:
     mov byte [LABEL_DESC_LDT + 7], ah
 
     ; fill ld
+    xor	eax, eax
+	mov	ax, ds
+	shl	eax, 4
+	add	eax, LABEL_CODE_A
     mov word [LABEL_LDT_DESC_CODEA + 2], ax
     shr eax, 16
     mov byte [LABEL_LDT_DESC_CODEA + 4], al
     mov byte [LABEL_LDT_DESC_CODEA + 7], ah
+
+    ; fill tss desc
+    xor	eax, eax
+	mov	ax, ds
+	shl	eax, 4
+	add	eax, LABEL_TSS
+	mov	word [LABEL_DESC_TSS + 2], ax
+	shr	eax, 16
+	mov	byte [LABEL_DESC_TSS + 4], al
+	mov	byte [LABEL_DESC_TSS + 7], ah
 
 	; fill gdtr desc
 	xor	eax, eax
@@ -258,6 +306,9 @@ LABEL_SEG_CODE32:
 .2:
 
     call DispReturn
+
+    mov ax, SelectorTSS
+    ltr ax
 
     push SelectorStack3
     push TopOfStack3
@@ -357,7 +408,12 @@ LABEL_SEG_CODE_DEST:
 	mov	al, 'C'
 	mov	[gs:edi], ax
 
-	retf
+    ; load LDT
+    mov ax, SelectorLDT
+    lldt ax
+
+    jmp SelectorLDTCodeA:0
+	;retf
 
 SegCodeDestLen	equ	$ - LABEL_SEG_CODE_DEST
 
@@ -365,18 +421,19 @@ SegCodeDestLen	equ	$ - LABEL_SEG_CODE_DEST
 ALIGN 32
 [BITS 16]
 LABEL_SEG_CODE16:
-;   mov ax, SelectorNormal
-;   mov ds, ax
-;   mov es, ax
-;   mov fs, ax
-;   mov gs, ax
-;   mov ss, ax
-;  disable protect mode and reutrn to real mode
-   mov eax, cr0
-   and al, 0xfe
-   mov cr0, eax
+    mov ax, SelectorNormal
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    ;disable protect mode and return to real mode
+    mov eax, cr0
+    and al, 0xfe
+    mov cr0, eax
+
 LABEL_GO_BACK_TO_REAL:
-   jmp 0:LABEL_REAL_ENTRY
+    jmp 0:LABEL_REAL_ENTRY
 
 Code16Len equ $ - LABEL_SEG_CODE16
 ; END of [Section .s16code]
@@ -400,11 +457,12 @@ ALIGN	32
 LABEL_CODE_A:
 	mov	ax, SelectorVideo
 	mov	gs, ax
-	mov	edi, (80 * 12 + 0) * 2
+	mov	edi, (80 * 13 + 0) * 2
     mov	ah, 0Ch
 	mov	al, 'L'
 	mov	[gs:edi], ax
 	jmp	SelectorCode16:0
+
 CodeALen	equ	$ - LABEL_CODE_A
 ; END of [SECTION .la]
 
@@ -420,6 +478,8 @@ LABEL_CODE_RING3:
     mov	al, '3'
 	mov	[gs:edi], ax
 
-	jmp	$
+    call SelectorCallGateTest:0
+
+	;jmp	$
 SegCodeRing3Len	equ	$ - LABEL_CODE_RING3
 ; END of [SECTION .ring3]
