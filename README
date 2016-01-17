@@ -9,3 +9,32 @@ add a hack_boot.c to make a boot using
 qemu-system-x86_64
 gcc hack_boot.c -o hack_boot
 ./hack_boot pmtest1.bin
+
+chapter3/b:
+because of the bin size compiled is about 1k,
+it can't be filled in 512 byte boot sector as
+before, so we need freedos to execute the prog.
+following the steps listed blow:
+1. go to Bochs offical websit and download FreeDos image,
+extract it and rename a.img to freedos.img
+
+2. create a floppy disk, using qemu-img
+qemu-img create -f raw pm.img 1.4M
+
+3.start qemu
+qemu-system-x86_64 -fda freedos.img -fdb pm.img
+
+4. format the floppy disk and exit qemu
+format b:
+
+5.compile the bin
+nasm pmtest1.asm -o pmtest1.bin
+
+6.cp bin to the floppy disk
+sudo mount -o loop pm.img /mnt
+sudo cp pmtest1.bin /mnt
+sudo umount /mnt
+
+6.start qemu and execute the bin
+qemu-system-x86_64 -fda freedos.img -fdb pm.img
+> B:\pmtest1.bin
