@@ -15,12 +15,15 @@ LABEL_GDT:	   Descriptor       0,                0, 0           ; null desc
 LABEL_DESC_NORMAL: Descriptor    0,         0ffffh, DA_DRW
 
 LABEL_DESC_CODE32: Descriptor       0, SegCode32Len - 1, DA_C + DA_32; non-coherent code
-LABEL_DESC_CODE16: Descriptor    0,         0ffffh, DA_C
-LABEL_DESC_DATA:   Descriptor    0,      DataLen-1, DA_DRW + DA_DPL1
-LABEL_DESC_STACK:  Descriptor    0,     TopOfStack, DA_DRWA+DA_32
-LABEL_DESC_TEST:   Descriptor 0500000h,     0ffffh, DA_DRW
-LABEL_DESC_LDT:    Descriptor       0,        LDTLen - 1, DA_LDT
-LABEL_DESC_VIDEO:  Descriptor 0B8000h,           0ffffh, DA_DRW	     ; viedo base adrress
+LABEL_DESC_CODE16:  Descriptor    0,    0ffffh, DA_C
+LABEL_DESC_DATA:    Descriptor    0,    DataLen-1, DA_DRW
+LABEL_DESC_STACK:   Descriptor    0,    TopOfStack, DA_DRWA+DA_32
+LABEL_DESC_CODE_DEST: Descriptor  0,    SegCodeDestLen-1, DA_C+DA_32
+LABEL_DESC_TEST:    Descriptor 0500000h,0ffffh, DA_DRW
+LABEL_DESC_LDT:     Descriptor       0,  LDTLen - 1, DA_LDT
+LABEL_DESC_VIDEO:   Descriptor 0B8000h,  0ffffh, DA_DRW	     ; viedo base adrress
+LABEL_CALL_GATE_TEST: Gate SelectorCodeDest,   0,     0, DA_386CGate+DA_DPL0
+; call gate
 
 GdtLen		equ	$ - LABEL_GDT	; GDT length
 GdtPtr		dw	GdtLen - 1	; GDT limit
@@ -29,12 +32,14 @@ GdtPtr		dw	GdtLen - 1	; GDT limit
 ; GDT selector
 SelectorNormal		equ	LABEL_DESC_NORMAL	- LABEL_GDT
 SelectorCode16		equ	LABEL_DESC_CODE16	- LABEL_GDT
-SelectorData		equ	LABEL_DESC_DATA		- LABEL_GDT + SA_RPL3
+SelectorData		equ	LABEL_DESC_DATA		- LABEL_GDT
+SelectorCodeDest	equ	LABEL_DESC_CODE_DEST	- LABEL_GDT
 SelectorStack		equ	LABEL_DESC_STACK	- LABEL_GDT
 SelectorTest		equ	LABEL_DESC_TEST		- LABEL_GDT
 SelectorCode32		equ	LABEL_DESC_CODE32	- LABEL_GDT
 SelectorVideo		equ	LABEL_DESC_VIDEO	- LABEL_GDT
 SelectorLDT		    equ	LABEL_DESC_LDT		- LABEL_GDT
+SelectorCallGateTest	equ	LABEL_CALL_GATE_TEST	- LABEL_GDT
 ; END of [SECTION .gdt]
 
 [SECTION .data1]	 ; data section
@@ -91,6 +96,16 @@ LABEL_BEGIN:
 	shr	eax, 16
 	mov	byte [LABEL_DESC_CODE32 + 4], al
 	mov	byte [LABEL_DESC_CODE32 + 7], ah
+
+    ; fill call dest code
+	xor	eax, eax
+	mov	ax, cs
+	shl	eax, 4
+	add	eax, LABEL_SEG_CODE_DEST
+	mov	word [LABEL_DESC_CODE_DEST + 2], ax
+	shr	eax, 16
+	mov	byte [LABEL_DESC_CODE_DEST + 4], al
+	mov	byte [LABEL_DESC_CODE_DEST + 7], ah
 
 	; fill data desc
 	xor	eax, eax
@@ -213,6 +228,8 @@ LABEL_SEG_CODE32:
 
     call DispReturn
 
+    call SelectorCallGateTest:0
+
     ; load LDT
     mov ax, SelectorLDT
     lldt ax
@@ -299,6 +316,21 @@ DispReturn:
     ret
 SegCode32Len	equ	$ - LABEL_SEG_CODE32
 ; END of [SECTION .s32]
+
+[SECTION .sdest]; 调用门目标段
+[BITS	32]
+
+LABEL_SEG_CODE_DEST:
+	mov	ax, SelectorVideo
+	mov	gs, ax
+	mov	edi, (80 * 12 + 1) * 2
+	mov	ah, 0Ch
+	mov	al, 'C'
+	mov	[gs:edi], ax
+
+	retf
+
+SegCodeDestLen	equ	$ - LABEL_SEG_CODE_DEST
 
 [SECTION .s16code]
 ALIGN 32
