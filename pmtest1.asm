@@ -5,6 +5,9 @@
 
 %include	"pm.inc"	; headfile
 
+PageDirBase		equ	200000h	; page dir base: 2M
+PageTblBase		equ	201000h	; page table base: 2M+4K
+
 org	0100h
 	jmp	LABEL_BEGIN
 
@@ -22,6 +25,9 @@ LABEL_DESC_TEST:    Descriptor 0500000h,0ffffh, DA_DRW
 LABEL_DESC_LDT:     Descriptor       0,  LDTLen - 1, DA_LDT
 LABEL_DESC_VIDEO:   Descriptor 0B8000h,  0ffffh, DA_DRW	+ DA_DPL3    ; viedo base adrress
 LABEL_CALL_GATE_TEST: Gate SelectorCodeDest,   0,     0, DA_386CGate+DA_DPL3
+LABEL_DESC_PAGE_DIR: Descriptor PageDirBase, 4095, DA_DRW;Page Directory
+LABEL_DESC_PAGE_TBL: Descriptor PageTblBase, 1023, DA_DRW|DA_LIMIT_4K;Page Tables
+
 ; call gate
 
 LABEL_DESC_CODE_RING3: Descriptor 0, SegCodeRing3Len-1, DA_C+DA_32+DA_DPL3
@@ -47,6 +53,8 @@ SelectorCallGateTest	equ	LABEL_CALL_GATE_TEST	- LABEL_GDT + SA_RPL3
 SelectorCodeRing3	equ	LABEL_DESC_CODE_RING3	- LABEL_GDT + SA_RPL3
 SelectorStack3		equ	LABEL_DESC_STACK3	- LABEL_GDT + SA_RPL3
 SelectorTSS		equ	LABEL_DESC_TSS		- LABEL_GDT
+SelectorPageDir		equ	LABEL_DESC_PAGE_DIR	- LABEL_GDT
+SelectorPageTbl		equ	LABEL_DESC_PAGE_TBL	- LABEL_GDT
 ; END of [SECTION .gdt]
 
 [SECTION .data1]	 ; data section
@@ -277,9 +285,10 @@ LABEL_REAL_ENTRY:		; protect mode to real address mode
 
 LABEL_SEG_CODE32:
     ; load correct selector for segment register
-	mov	ax, SelectorData
-	mov     ds, ax
-	mov	ax, SelectorTest
+    call SetupPaging
+    mov	ax, SelectorData
+    mov     ds, ax
+    mov	ax, SelectorTest
     mov es, ax
     mov ax, SelectorVideo
     mov gs, ax
@@ -292,7 +301,7 @@ LABEL_SEG_CODE32:
     xor esi, esi
     xor edi, edi
     mov esi, OffsetPMMessage
-	mov	edi, (80 * 10 + 0) * 2	; row 10, colmun 0
+    mov	edi, (80 * 10 + 0) * 2	; row 10, colmun 0
 
     cld
 .1:
@@ -304,95 +313,38 @@ LABEL_SEG_CODE32:
     jmp .1
 
 .2:
+    jmp SelectorCode16:0
 
-    call DispReturn
-
-    mov ax, SelectorTSS
-    ltr ax
-
-    push SelectorStack3
-    push TopOfStack3
-    push SelectorCodeRing3
-    push 0
-    retf    ; Ring0 -> Ring3
-
-TestRead:
-    xor esi, esi
-    mov ecx, 8
-.loop:
-    mov al, [es:esi]
-    call DispAL
-    inc esi
-    loop .loop
-
-    call DispReturn
-    ret
-
-TestWrite:
-    push esi
-    push edi
-    xor esi, esi
+SetupPaging:
+    mov ax, SelectorPageDir
+    mov es, ax
+    mov ecx, 1024
     xor edi, edi
-    mov esi, OffsetStrTest
-    cld
-
+    mov eax, PageTblBase | PG_P | PG_USU | PG_RWW
 .1:
-    lodsb
-    test al, al
-    jz .2
-    mov [es:edi], al
-    inc edi
-    jmp .1
+    stosd
+    add eax, 4096
+    loop .1
 
+    mov ax, SelectorPageTbl
+    mov es, ax
+    mov ecx, 1024*1024
+    xor edi, edi
+    xor eax, eax
+    mov eax, PG_P | PG_USU | PG_RWW
 .2:
-    pop edi
-    pop esi
-    ret
+    stosd
+    add eax, 4096
+    loop .2
 
-DispAL:
-    push ecx
-    push edx
-
-    mov ah, 0xC
-    mov dl, al
-    shr al, 4
-    mov ecx, 2
-
-.begin:
-    and al, 0xf
-    cmp al, 9
-    ja .1
-    add al, '0'
-    jmp .2
-
-.1:
-    sub al, 0xA
-    add al, 'A'
-
-.2:
-    mov [gs:edi], ax
-    add edi, 2
-
-    mov al, dl
-    loop .begin
-
-    pop edx
-    pop ecx
-    ret
-
-DispReturn:
-    push eax
-    push ebx
-    mov eax, edi
-    mov bl, 160
-    div bl
-    and eax, 0xff
-    inc eax
-    mov bl, 160
-    mul bl
-    mov edi, eax
-    pop ebx
-    pop eax
+    mov eax, PageDirBase
+    mov cr3, eax
+    mov eax, cr0
+    or eax, 80000000h
+    mov cr0, eax
+    jmp short .3
+.3:
+    nop
     ret
 SegCode32Len	equ	$ - LABEL_SEG_CODE32
 ; END of [SECTION .s32]
@@ -429,7 +381,7 @@ LABEL_SEG_CODE16:
     mov ss, ax
     ;disable protect mode and return to real mode
     mov eax, cr0
-    and al, 0xfe
+    and eax, 7ffffffeh
     mov cr0, eax
 
 LABEL_GO_BACK_TO_REAL:

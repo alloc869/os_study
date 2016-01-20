@@ -192,7 +192,7 @@
 
 ; 描述符类型
 DA_32		EQU	4000h	; 32 位段
-
+DA_LIMIT_4K	EQU	8000h   ;	
 DA_DPL0		EQU	  00h	; DPL = 0
 DA_DPL1		EQU	  20h	; DPL = 1
 DA_DPL2		EQU	  40h	; DPL = 2
@@ -244,7 +244,11 @@ SA_TIG		EQU	0	; ┓TI
 SA_TIL		EQU	4	; ┛
 ;----------------------------------------------------------------------------
 
-
+PG_P		EQU	1	; present bit 
+PG_RWR		EQU	0	; R/W Read only
+PG_RWW		EQU	2	; R/W RW
+PG_USS		EQU	0	; U/S user mode
+PG_USU		EQU	4	; U/S SYS mode
 
 ; 宏 ------------------------------------------------------------------------------------------------------
 ;
